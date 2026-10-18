@@ -1,0 +1,62 @@
+import importlib
+import os
+import sys
+from pathlib import Path
+from typing import Any
+
+from shipfn.decorator import registry
+
+SKIP_DIRS = {".git", ".venv", "venv", "env", "node_modules", "__pycache__", "tests", "test", ".shipfn_sdk", "build", "dist"}
+MANIFEST_VERSION = 1
+
+
+def discover_modules(root: Path) -> list[str]:
+    """Dotted names of every module under root that mentions shipfn, so they can be imported."""
+    modules = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS and not d.startswith("."))
+        for filename in sorted(filenames):
+            if not filename.endswith(".py"):
+                continue
+            path = Path(dirpath) / filename
+            try:
+                text = path.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            if "shipfn" not in text or "deploy" not in text:
+                continue
+            rel = path.relative_to(root).with_suffix("")
+            parts = list(rel.parts)
+            if parts[-1] == "__init__":
+                parts = parts[:-1]
+            if parts:
+                modules.append(".".join(parts))
+    return modules
+
+
+def build_manifest(root: Path) -> dict[str, Any]:
+    from shipfn import __version__
+
+    root = root.resolve()
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    errors = []
+    for module in discover_modules(root):
+        try:
+            importlib.import_module(module)
+        except Exception as exc:  # report every broken module, not just the first
+            errors.append({"module": module, "error": f"{type(exc).__name__}: {exc}"})
+
+    functions = []
+    for fn in sorted(registry.values(), key=lambda f: f.name):
+        try:
+            functions.append(fn.manifest_entry())
+        except Exception as exc:
+            errors.append({"function": fn.name, "error": f"{type(exc).__name__}: {exc}"})
+
+    return {
+        "manifest_version": MANIFEST_VERSION,
+        "sdk_version": __version__,
+        "functions": functions,
+        "errors": errors,
+    }
