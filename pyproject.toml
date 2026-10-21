@@ -25,7 +25,7 @@ shipfn = "shipfn.cli:main"
 include = ["shipfn*"]
 
 [tool.setuptools.package-data]
-shipfn = ["py.typed"]
+shipfn = ["py.typed", "GUIDE.md"]
 
 [tool.setuptools.dynamic]
 version = { attr = "shipfn.__version__" }

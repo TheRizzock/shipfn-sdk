@@ -103,12 +103,12 @@ def test_runtime_emits_result_and_errors(tmp_path, capsys, monkeypatch):
     assert run("autos.m:rt_ok", tmp_path) == 0
     out = capsys.readouterr().out.strip().splitlines()
     assert out[0] == "working"
-    assert json.loads(out[-1].removeprefix(RESULT_MARKER)) == {"ok": True, "value": [{"n": 5, "d": "2026-01-01"}]}
+    assert json.loads(out[-1].removeprefix(RESULT_MARKER)) == {"ok": True, "value": [{"n": 5, "d": "2026-01-01"}], "files": []}
     assert "SHIPFN_INPUTS" not in os.environ  # inputs are consumed, not left for user code
 
     assert run("autos.m:rt_bad", tmp_path) == 1
     last = capsys.readouterr().out.strip().splitlines()[-1]
-    assert json.loads(last.removeprefix(RESULT_MARKER)) == {"ok": False, "error": "ValueError: nope"}
+    assert json.loads(last.removeprefix(RESULT_MARKER)) == {"ok": False, "error": "ValueError: nope", "files": []}
 
 
 def test_manifest_reports_import_errors(tmp_path):

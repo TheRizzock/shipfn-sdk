@@ -3,7 +3,12 @@ import inspect
 import typing
 from typing import Any, Callable
 
-from pydantic import BaseModel, ConfigDict, create_model
+from pydantic import BaseModel, ConfigDict, TypeAdapter, create_model
+
+from shipfn.files import File
+
+SUPPORTED_TYPES = ("str, int, float, bool, date, datetime, Literal[...], an Enum, list[...] of those, "
+                   "X | None, a Pydantic model, or File")
 
 
 @functools.cache
@@ -17,11 +22,24 @@ def input_model(func: Callable[..., Any]) -> type[BaseModel]:
         annotation = hints.get(param.name, str)
         default = ... if param.default is inspect.Parameter.empty else param.default
         fields[param.name] = (annotation, default)
-    return create_model(
-        f"{func.__name__}_inputs",
-        __config__=ConfigDict(extra="forbid"),
-        **fields,
-    )
+    try:
+        model = create_model(f"{func.__name__}_inputs", __config__=ConfigDict(extra="forbid"), **fields)
+        model.model_json_schema()
+    except Exception as exc:
+        _raise_unsupported(func, fields, exc)
+    return model
+
+
+def _raise_unsupported(func: Callable[..., Any], fields: dict[str, Any], exc: Exception) -> typing.NoReturn:
+    """Name the parameter that can't become a form field, instead of Pydantic's internals."""
+    for param, (annotation, _) in fields.items():
+        try:
+            TypeAdapter(annotation).json_schema()
+        except Exception:
+            shown = getattr(annotation, "__name__", None) or repr(annotation)
+            raise TypeError(f"{func.__name__}: parameter '{param}: {shown}' can't become a form field. "
+                            f"Use {SUPPORTED_TYPES}.") from exc
+    raise exc
 
 
 def input_schema(func: Callable[..., Any]) -> dict[str, Any]:
@@ -32,12 +50,14 @@ def input_schema(func: Callable[..., Any]) -> dict[str, Any]:
 
 
 def output_kind(func: Callable[..., Any]) -> str:
-    """How the launcher renders the return value: markdown, table, kv, none or json."""
+    """How the launcher renders the return value: markdown, table, kv, file, none or json."""
     ret = typing.get_type_hints(func).get("return", inspect.Signature.empty)
     if ret is inspect.Signature.empty:
         return "json"
     if ret is None or ret is type(None):
         return "none"
+    if ret is File or (typing.get_origin(ret) is list and typing.get_args(ret) in ((File,),)):
+        return "file"
     if ret is str:
         return "markdown"
     origin = typing.get_origin(ret)

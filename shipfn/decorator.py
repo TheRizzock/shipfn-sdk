@@ -8,6 +8,8 @@ from shipfn.schema import input_model, input_schema, output_kind
 
 @dataclass
 class DeployedFunction:
+    """What @deploy recorded about a function; `registry` maps names to these."""
+
     func: Callable[..., Any]
     name: str
     title: str
@@ -54,7 +56,29 @@ def deploy(
     schedule: str | None = None,
     timeout: int = 300,
 ):
-    """Mark a function as deployable. Works bare (`@deploy`) or with options (`@deploy(...)`)."""
+    """Deploy a function to Shipfn: teammates run it from a web form generated from its type hints.
+
+    Works bare (`@deploy`) or with options (`@deploy(title="Weekly report", secrets=["CRM_TOKEN"])`).
+
+    Args:
+        name: Identity on the platform (defaults to the function name). Changing it creates a new
+            automation, so pass the old name here if you rename the Python function.
+        title: Heading people see (defaults to the name as a sentence, e.g. "Weekly report").
+        description: One line shown on the card (defaults to the docstring's first paragraph).
+        secrets: Environment variable names to inject at run time; values are set in the web app.
+            Read them inside the function with `os.environ["NAME"]`.
+        schedule: Cron expression in UTC (e.g. "0 9 * * MON"). Every input needs a default.
+            Usually unnecessary: anyone can schedule a function from the web app.
+        timeout: Seconds before the run is stopped (default 300, platform maximum 900).
+
+    Inputs: str, int, float, bool, date, datetime, Literal[...]/Enum (dropdown), list[...], X | None,
+    Pydantic models and File (upload). Defaults make a field optional.
+
+    Results by return annotation: str -> Markdown, list[dict] -> table, dict/model -> key-value list,
+    File/list[File] -> downloads, None -> "Done".
+
+    Run `shipfn docs` for the full guide and `shipfn check` before pushing.
+    """
 
     def wrap(f: Callable[..., Any]) -> Callable[..., Any]:
         fn_name = name or f.__name__
