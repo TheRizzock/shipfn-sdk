@@ -7,18 +7,20 @@ import sys
 import traceback
 from pathlib import Path
 
+ROOT_HELP = "Folder to build from (default: this repo, or the root set in shipfn.toml / [tool.shipfn])"
+
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="shipfn", description="Deploy Python functions as forms for your team.")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_check = sub.add_parser("check", help="Find the problems a deploy would hit, with fixes (exit 1 on errors)")
-    p_check.add_argument("--root", default=".")
+    p_check.add_argument("--root", help=ROOT_HELP)
     p_check.add_argument("--json", action="store_true", help="Print one JSON object instead of text")
 
     p_local = sub.add_parser("local", help="Run a function by name on this machine")
     p_local.add_argument("name")
-    p_local.add_argument("--root", default=".")
+    p_local.add_argument("--root", help=ROOT_HELP)
     p_local.add_argument("--input", "-i", action="append", default=[], metavar="KEY=VALUE",
                          help="An input value; JSON is parsed when it can be (-i days=7 -i region=NA), "
                               "and @path passes a file (-i sheet=@data.csv)")
@@ -26,7 +28,7 @@ def main(argv: list[str] | None = None) -> int:
                          help="Print one JSON object on stdout (the function's own output goes to stderr)")
 
     p_manifest = sub.add_parser("manifest", help="Print the JSON manifest of every @deploy function")
-    p_manifest.add_argument("--root", default=".")
+    p_manifest.add_argument("--root", help=ROOT_HELP)
 
     sub.add_parser("docs", help="Print the guide to writing automations (for people and coding agents)")
 
@@ -47,7 +49,18 @@ def main(argv: list[str] | None = None) -> int:
         print(guide())
         return 0
 
-    root = Path(args.root).resolve()
+    if args.root is None:  # same folder the platform would build
+        from shipfn.project import ConfigError, build_root
+
+        try:
+            root, source = build_root(Path.cwd())
+        except ConfigError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        if source and args.command != "manifest":
+            print(f"Using {root.relative_to(Path.cwd().resolve())}/ (root in {source})", file=sys.stderr)
+    else:
+        root = Path(args.root).resolve()
 
     if args.command == "manifest":
         from shipfn.manifest import build_manifest

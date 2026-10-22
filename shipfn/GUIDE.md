@@ -99,11 +99,35 @@ def clean_contacts(sheet: Annotated[File, accept(".csv")]) -> File:
 
 ## Runtime environment
 
-- Python 3.12 in a sandbox with 512 MB of memory and 1 CPU. It runs as a non-root user and has internet access.
-- Dependencies come from `requirements.txt` at the repo root, or from `[project].dependencies` in `pyproject.toml`. **Don't list `shipfn`.** The platform installs its own matching copy.
-- Writable space: `/tmp`, limited to 256 MB. Every run starts fresh, so nothing persists between runs. Keep state in your own database or storage.
+- Each run gets a fresh sandbox on Debian 13 (trixie). It runs as a non-root user and has internet access.
+- **Python version:** taken from `.python-version` (e.g. `3.13`), else the newest version your `pyproject.toml` `requires-python` allows, else 3.12. Supported: 3.10 to 3.14.
+- **Python dependencies** come from `requirements.txt` at the repo root, or from `[project].dependencies` in `pyproject.toml`. **Don't list `shipfn`.** The platform installs its own matching copy.
+- **Automations in a subfolder:** by default the whole repo is built. To build only one folder, add `shipfn.toml` at the repo root containing `root = "automations"` (or `[tool.shipfn] root = "automations"` in `pyproject.toml`). Then only that folder goes into the image, and its own `requirements.txt`, `apt.txt` and `.python-version` are used. Code in it can't import from the rest of the repo. `shipfn check`, `local` and `manifest` use the same folder when run from the repo root.
+- **Writable space:** your home directory (`~`), and `/tmp`, which is limited to 256 MB. Your code in `/app` is read-only. Every run starts fresh, so nothing persists between runs. Keep state in your own database or storage.
+- **Running downloaded binaries:** `/tmp` doesn't allow running programs, so a binary downloaded there fails with `Permission denied`. Put it under `~` and `chmod +x` it. Better still, install the tool with `apt.txt` (below).
 - Every module that imports `shipfn` and mentions `deploy` is imported at build time. Keep import-time code cheap and free of side effects: no network calls, and no reading secrets at module level. Read secrets inside the function.
 - `print()` output and `logging` show as the run's logs. Tracebacks are shown only to builders, never to the person running the automation.
+
+## System packages
+
+When a function shells out to a command-line tool (a converter, a database client, a headless browser), list the Debian packages it needs in `apt.txt` at the repo root:
+
+```
+# apt.txt: one package per line
+ffmpeg
+poppler-utils
+```
+
+- Names only, no versions. You get the version Debian 13 (trixie) ships, which stays the same apart from security fixes. If the tool talks to an outside service, check that this version works with it.
+- Packages are installed without their "recommended" extras. If a tool is missing something (fonts, for example), list that package too.
+- They're installed once per change to `apt.txt`, not on every push.
+- `shipfn local` uses the tools on your own machine, so install them there too to test.
+
+## Memory and CPU
+
+You don't size anything. A run can use memory and CPU up to your organisation's plan limit, and usage is billed on what the run actually used, not on the limit. Builders see each run's peak memory and CPU time on its page.
+
+If a run goes over the memory limit, it fails with an error that says so. Fix it by using less memory (process files in chunks, stream instead of loading everything, free large objects you're done with), or move to a bigger plan. Child processes count toward the same limit.
 
 ## Errors people will see
 
