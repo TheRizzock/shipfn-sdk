@@ -44,6 +44,7 @@ Try a function on your machine before pushing:
 
 ```bash
 shipfn check           # problems a deploy would hit, with fixes (exit 1 on errors)
+shipfn weekly_report --region EMEA --days 30   # every function is also a CLI command
 shipfn local weekly_report -i region=EMEA -i days=30
 shipfn local clean -i sheet=@sales.csv     # @path passes a file; outputs land in ./shipfn-output/
 shipfn manifest        # what the platform will see

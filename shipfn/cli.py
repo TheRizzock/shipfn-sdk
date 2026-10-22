@@ -11,7 +11,10 @@ ROOT_HELP = "Folder to build from (default: this repo, or the root set in shipfn
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="shipfn", description="Deploy Python functions as forms for your team.")
+    parser = argparse.ArgumentParser(
+        prog="shipfn", description="Deploy Python functions as forms for your team.",
+        epilog="Run your own functions like commands: shipfn <group> <action> --flag value (or shipfn <function> ...). "
+               "`shipfn <group> --help` lists a group's actions; `shipfn check` lists everything.")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_check = sub.add_parser("check", help="Find the problems a deploy would hit, with fixes (exit 1 on errors)")
@@ -40,6 +43,10 @@ def main(argv: list[str] | None = None) -> int:
     p_run = sub.add_parser("run", help="(Used by the platform) run one function with inputs from $SHIPFN_INPUTS")
     p_run.add_argument("entrypoint", help="module:function")
     p_run.add_argument("--root", default=".")
+
+    argv = sys.argv[1:] if argv is None else argv
+    if argv and not argv[0].startswith("-") and argv[0] not in sub.choices:
+        return _command(argv)  # shipfn <group> <action> --flags, or shipfn <function> --flags
 
     args = parser.parse_args(argv)
 
@@ -77,7 +84,7 @@ def main(argv: list[str] | None = None) -> int:
         return _check(root, args.json)
 
     if args.command == "local":
-        return _local(root, args.name, args.input, args.json)
+        return _local(root, args.name, _parse_inputs(args.input), args.json)
 
     if args.command == "init":
         from shipfn.init import init_project
@@ -137,7 +144,37 @@ def _field_errors(exc) -> dict[str, str]:
     return {".".join(str(p) for p in err["loc"]) or "inputs": err["msg"] for err in exc.errors()}
 
 
-def _local(root: Path, name: str, pairs: list[str], as_json: bool) -> int:
+def _command(argv: list[str]) -> int:
+    from shipfn.commands import command_tree, find, parse_inputs
+    from shipfn.manifest import build_manifest
+    from shipfn.project import ConfigError, build_root
+
+    try:
+        root, _ = build_root(Path.cwd())
+    except ConfigError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    with contextlib.redirect_stdout(sys.stderr):  # import-time prints shouldn't mix with the result
+        manifest = build_manifest(root)
+    for err in manifest["errors"]:
+        print(f"warning: {err.get('module') or err.get('function')}: {err['error']}", file=sys.stderr)
+    fn, rest, prog = find(manifest["functions"], argv)
+    if fn is None:
+        group = [f for f in manifest["functions"] if (f.get("group") or {}).get("name") == argv[0]]
+        if group:
+            asked = not rest or rest[0] in ("-h", "--help")
+            if not asked:
+                print(f"{prog}: no action named '{rest[0]}'", file=sys.stderr)
+            print(f"usage: {prog} <action> [--flags]\n\n{group[0]['group']['title']}", file=sys.stdout if asked else sys.stderr)
+            print(command_tree(group).split("\n", 1)[1], file=sys.stdout if asked else sys.stderr)
+            return 0 if asked else 2
+        print(f"shipfn: '{argv[0]}' isn't a command, group or function. You can run:\n"
+              f"{command_tree(manifest['functions'])}\n\nBuilt-in commands: shipfn --help", file=sys.stderr)
+        return 2
+    return _local(root, fn["name"], parse_inputs(prog, fn, rest), as_json=False)
+
+
+def _local(root: Path, name: str, inputs: dict, as_json: bool) -> int:
     from pydantic import ValidationError
 
     from shipfn.decorator import registry
@@ -164,7 +201,7 @@ def _local(root: Path, name: str, pairs: list[str], as_json: bool) -> int:
                 print(message, file=sys.stderr)
             return report({"ok": False, "error": message, "import_errors": manifest["errors"]})
         try:
-            result = finish(registry[name].call(_parse_inputs(pairs)))
+            result = finish(registry[name].call(inputs))
         except ValidationError as exc:
             fields = _field_errors(exc)
             if not as_json:

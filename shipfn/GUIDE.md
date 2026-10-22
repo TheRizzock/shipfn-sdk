@@ -39,6 +39,40 @@ def closed_deals(region: Literal["NA", "EMEA", "APAC"] = "NA", since: date | Non
 - `timeout`: in seconds. The default is 300 and the maximum is 900.
 - `schedule`: a cron expression in UTC, for schedules owned by the code. Only use it when the user asks for one. Anyone can add a schedule in the web app, so you usually don't need it.
 
+## Groups: organise related functions
+
+A project (one repo) can hold many functions. Put related ones in a `Group`, like a Typer sub-app. People see them as one section of the project in the web app, and you run them as `shipfn <group> <action>`.
+
+```python
+from typing import Literal
+
+from shipfn import Group
+
+backups = Group("backups", title="Database backups", description="Postgres dumps to object storage",
+                secrets=["SPACES_KEY", "SPACES_SECRET"])   # given to every action in the group
+
+
+@backups.deploy(title="Back up now", secrets=["DATABASE_URL"])
+def run(env: Literal["prod", "staging"] = "prod", keep: int = 7) -> str:
+    ...
+
+
+@backups.deploy(title="List backups")
+def list_all(days: int = 30) -> list[dict]:
+    ...
+```
+
+```bash
+shipfn backups --help                  # the group's actions
+shipfn backups run --help              # flags, from the type hints
+shipfn backups run --env staging --keep 3
+```
+
+- A group name is lowercase letters, digits, `-` or `_`, and can't be a built-in command (`check`, `local`, ...). Define each group once and import it wherever you need it.
+- An action's full name is `<group>.<name>`, e.g. `backups.run`. Use that with `shipfn local`.
+- A function's name is its identity on the platform. Moving an existing function into a group gives it a new name, so it starts with fresh run history and sharing settings.
+- A plain `@deploy` still works. Those functions appear in the project without a section, and run as `shipfn <name> --flags`.
+
 ## Inputs: type hints become the form
 
 | Type hint | Form field |
@@ -136,6 +170,7 @@ Raise exceptions with messages written for the person running the automation. Th
 ## Commands
 
 - `shipfn check [--json]`: problems a deploy would hit, with fixes. Exit code 1 on errors.
+- `shipfn <group> <action> [--flags]` (or `shipfn <function> [--flags]`): run a function like a CLI command. Each input is a flag (`days` becomes `--days`, a bool becomes `--dry-run/--no-dry-run`, a list takes several values). Add `--help` to see them.
 - `shipfn local <name> [-i key=value ...] [--json]`: run a function on this machine. Values are parsed as JSON when possible, and `@path` passes a file. `--json` prints one JSON object on stdout (`ok`, `value`, `files`, `error`, `field_errors`), and the function's own prints go to stderr.
 - `shipfn manifest`: the full JSON the platform reads, including each input's JSON Schema.
 - `shipfn docs`: prints this guide.

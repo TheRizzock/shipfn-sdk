@@ -1,14 +1,53 @@
 import functools
 import inspect
+import re
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from shipfn.schema import input_model, input_schema, output_kind
 
 
+GROUP_NAME = re.compile(r"^[a-z][a-z0-9_-]*$")
+# Commands the CLI already has; a group can't share a name with them (`shipfn <group> <action>`)
+RESERVED_GROUP_NAMES = {"check", "local", "manifest", "docs", "init", "run", "help"}
+
+
+class Group:
+    """A set of related actions, like a Typer sub-app: `shipfn <group> <action>` locally, and one section of the
+    project in the web app. Secrets listed here are given to every action in the group.
+
+        backups = Group("backups", title="Database backups", secrets=["SPACES_KEY"])
+
+        @backups.deploy(title="Back up now")
+        def run(env: Literal["prod", "staging"] = "prod") -> str: ...
+    """
+
+    def __init__(self, name: str, *, title: str | None = None, description: str = "",
+                 secrets: list[str] | None = None):
+        if not GROUP_NAME.match(name):
+            raise ValueError(f"Group name '{name}' must be lowercase letters, digits, '-' or '_', starting with a "
+                             "letter (it's typed as `shipfn <group> <action>`)")
+        if name in RESERVED_GROUP_NAMES:
+            raise ValueError(f"'{name}' is a shipfn command, so it can't be a group name")
+        self.name = name
+        self.title = title or name.replace("_", " ").replace("-", " ").capitalize()
+        self.description = description
+        self.secrets = list(secrets or [])
+
+    def deploy(self, func: Callable[..., Any] | None = None, **options: Any):
+        """`@deploy` for an action in this group; takes the same options. Its full name is `<group>.<name>`."""
+        return deploy(func, _group=self, **options)
+
+    def manifest_entry(self) -> dict[str, Any]:
+        return {"name": self.name, "title": self.title, "description": self.description}
+
+    def __repr__(self) -> str:
+        return f"Group({self.name!r})"
+
+
 @dataclass
 class DeployedFunction:
-    """What @deploy recorded about a function; `registry` maps names to these."""
+    """What @deploy recorded about a function; `registry` maps full names (`group.action` or `action`) to these."""
 
     func: Callable[..., Any]
     name: str
@@ -17,6 +56,13 @@ class DeployedFunction:
     secrets: list[str] = field(default_factory=list)
     schedule: str | None = None
     timeout: int = 300
+    group: Group | None = None
+    action: str = ""  # the name within its group; the same as name when there's no group
+
+    @property
+    def all_secrets(self) -> list[str]:
+        """The group's secrets, then the action's own, without repeats."""
+        return list(dict.fromkeys([*(self.group.secrets if self.group else []), *self.secrets]))
 
     @property
     def entrypoint(self) -> str:
@@ -30,9 +76,11 @@ class DeployedFunction:
             "description": self.description,
             "input_schema": input_schema(self.func),
             "output_kind": output_kind(self.func),
-            "secrets": self.secrets,
+            "secrets": self.all_secrets,
             "schedule": self.schedule,
             "timeout": self.timeout,
+            "group": self.group.manifest_entry() if self.group else None,
+            "action": self.action,
         }
 
     def call(self, inputs: dict[str, Any]) -> Any:
@@ -55,6 +103,7 @@ def deploy(
     secrets: list[str] | None = None,
     schedule: str | None = None,
     timeout: int = 300,
+    _group: Group | None = None,
 ):
     """Deploy a function to Shipfn: teammates run it from a web form generated from its type hints.
 
@@ -77,20 +126,25 @@ def deploy(
     Results by return annotation: str -> Markdown, list[dict] -> table, dict/model -> key-value list,
     File/list[File] -> downloads, None -> "Done".
 
+    To organise related functions, deploy them through a `Group` instead: `@backups.deploy(...)`.
+
     Run `shipfn docs` for the full guide and `shipfn check` before pushing.
     """
 
     def wrap(f: Callable[..., Any]) -> Callable[..., Any]:
-        fn_name = name or f.__name__
+        action = name or f.__name__
+        fn_name = f"{_group.name}.{action}" if _group else action
         doc = inspect.getdoc(f) or ""
         deployed = DeployedFunction(
             func=f,
             name=fn_name,
-            title=title or fn_name.replace("_", " ").capitalize(),
+            title=title or action.replace("_", " ").capitalize(),
             description=description or doc.split("\n\n")[0],
             secrets=list(secrets or []),
             schedule=schedule,
             timeout=timeout,
+            group=_group,
+            action=action,
         )
         existing = registry.get(fn_name)
         if existing and existing.entrypoint != deployed.entrypoint:

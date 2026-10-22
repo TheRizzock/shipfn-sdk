@@ -54,6 +54,16 @@ def build_manifest(root: Path) -> dict[str, Any]:
         except Exception as exc:
             errors.append({"function": fn.name, "error": f"{type(exc).__name__}: {exc}"})
 
+    # Two different Group(...) objects with one name would make one section with two descriptions
+    groups: dict[str, Any] = {}
+    for fn in sorted(registry.values(), key=lambda f: f.name):
+        if fn.group is None:
+            continue
+        first = groups.setdefault(fn.group.name, fn.group)
+        if first is not fn.group and (first.manifest_entry(), first.secrets) != (fn.group.manifest_entry(), fn.group.secrets):
+            errors.append({"function": fn.name, "error": f"Group '{fn.group.name}' is defined twice with different "
+                           "settings. Define it once and import it where you need it."})
+
     return {
         "manifest_version": MANIFEST_VERSION,
         "sdk_version": __version__,
