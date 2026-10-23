@@ -171,10 +171,75 @@ def _command(argv: list[str]) -> int:
         print(f"shipfn: '{argv[0]}' isn't a command, group or function. You can run:\n"
               f"{command_tree(manifest['functions'])}\n\nBuilt-in commands: shipfn --help", file=sys.stderr)
         return 2
-    return _local(root, fn["name"], parse_inputs(prog, fn, rest), as_json=False)
+    return _local(root, fn["name"], parse_inputs(prog, fn, rest), as_json=False, follow=True)
 
 
-def _local(root: Path, name: str, inputs: dict, as_json: bool) -> int:
+def _rows(result) -> list[dict] | None:
+    if isinstance(result, dict):
+        return [result]
+    if isinstance(result, list) and result and all(isinstance(r, dict) for r in result):
+        return result
+    return None
+
+
+def _ask(prompt: str) -> str | None:
+    try:
+        return input(prompt).strip()
+    except EOFError:  # Ctrl-D ends the flow
+        print(file=sys.stderr)
+        return None
+
+
+def _pick(prompt: str, count: int) -> int | None:
+    """1-based choice; Enter (or Ctrl-D) stops."""
+    while True:
+        raw = _ask(f"{prompt} [1-{count}, Enter to stop]: ")
+        if not raw:
+            return None
+        if raw.isdigit() and 1 <= int(raw) <= count:
+            return int(raw) - 1
+        print(f"Type a number from 1 to {count}.", file=sys.stderr)
+
+
+def _follow(root: Path, fn: dict, functions: list[dict], rows: list[dict]) -> int:
+    """The terminal side of `next`: pick a row, pick what to do with it, fill in what's left, run it."""
+    from shipfn.commands import _coerce, _resolve
+
+    row = rows[0] if len(rows) == 1 else None
+    if row is None:
+        index = _pick("Pick a row", len(rows))
+        if index is None:
+            return 0
+        row = rows[index]
+    for i, option in enumerate(fn["next"], 1):
+        print(f"  {i}. {option['label']}")
+    choice = _pick("What next?", len(fn["next"]))
+    if choice is None:
+        return 0
+    option = fn["next"][choice]
+    target = next(f for f in functions if f["name"] == option["action"])
+    inputs = {name: row[field] for name, field in option["inputs"].items() if field in row}
+    schema = target["input_schema"]
+    for name in schema.get("x-order", []):
+        if name in inputs:
+            continue
+        prop = _resolve(schema["properties"][name], schema.get("$defs", {}))
+        hint = f" [{'/'.join(map(str, prop['enum']))}]" if "enum" in prop else ""
+        hint += f" (default {prop['default']})" if "default" in prop else ""
+        while True:
+            raw = _ask(f"{name}{hint}: ")
+            if raw is None:
+                return 0
+            if raw:
+                inputs[name] = _coerce(prop, raw)
+                break
+            if name not in schema.get("required", []):
+                break  # keep the default
+            print(f"{name} is required.", file=sys.stderr)
+    return _local(root, target["name"], inputs, as_json=False, follow=True)
+
+
+def _local(root: Path, name: str, inputs: dict, as_json: bool, follow: bool = False) -> int:
     from pydantic import ValidationError
 
     from shipfn.decorator import registry
@@ -217,12 +282,21 @@ def _local(root: Path, name: str, inputs: dict, as_json: bool) -> int:
 
     if as_json:
         return report({"ok": True, "value": result, "files": files})
-    if result is not None:
+    entry = next((f for f in manifest["functions"] if f["name"] == name), {})
+    rows = _rows(result)
+    # `next` turns a result into a menu, but only for a person at a terminal; scripts get plain output
+    interactive = follow and entry.get("next") and rows and sys.stdin.isatty() and sys.stdout.isatty()
+    if interactive and len(rows) > 1:
+        for i, row in enumerate(rows, 1):
+            print(f"  {i}. " + "   ".join(f"{k}={v}" for k, v in list(row.items())[:5]))
+    elif result is not None:
         print(result if isinstance(result, str) else json.dumps(result, indent=2))
     if files:
         print("\nFiles:", file=sys.stderr)
         for f in files:
             print(f"  {f['local_path']}  ({f['size']:,} bytes)", file=sys.stderr)
+    if interactive:
+        return _follow(root, entry, manifest["functions"], rows)
     return 0
 
 

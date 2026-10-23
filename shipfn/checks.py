@@ -61,6 +61,10 @@ def _check_function(fn: dict[str, Any]) -> list[dict[str, Any]]:
             issues.append(_issue("error", f"Secret name '{secret}' isn't a valid environment variable name", name,
                                  "Use letters, digits and underscores, e.g. SALES_API_TOKEN"))
 
+    if fn.get("next") and fn["output_kind"] not in ("table", "kv"):
+        issues.append(_issue("warning", "next actions are offered on table rows or a single record, so they won't "
+                             "show for this result", name, "Return list[dict] (rows) or a dict/model (one record)"))
+
     schedule = fn.get("schedule")
     if schedule:
         fields = schedule.split()

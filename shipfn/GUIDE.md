@@ -73,6 +73,37 @@ shipfn backups run --env staging --keep 3
 - A function's name is its identity on the platform. Moving an existing function into a group gives it a new name, so it starts with fresh run history and sharing settings.
 - A plain `@deploy` still works. Those functions appear in the project without a section, and run as `shipfn <name> --flags`.
 
+## Flows: what to do next with a result
+
+Chain actions into step-by-step flows with `next=`. Each row of a table result (or a single dict/model result) offers the next actions, with their inputs filled in from that row. Every step is still an ordinary action: it can be run on its own, scheduled or shared separately.
+
+```python
+from typing import Literal
+
+from shipfn import Group, Next
+
+users = Group("users", title="Users")
+
+
+@users.deploy(title="Make admin")
+def make_admin(user_id: int) -> str: ...
+
+
+@users.deploy(title="Subscription requirement")
+def set_subscription(user_id: int, required: Literal["Required", "Not required"]) -> str: ...
+
+
+@users.deploy(title="Find user", next=[make_admin, Next(set_subscription, label="Change subscription", user_id="id")])
+def search(query: str) -> list[dict]:
+    return [{"id": 42, "user_id": 42, "name": "Ann Lee", "email": "ann@example.com"}]
+```
+
+- An action's inputs are filled from result fields with the same name. `Next(action, user_id="id")` maps a field with a different name, and `label=` changes the button text.
+- `next` takes deployed functions, or names (`"make_admin"`, or `"users.make_admin"` for another group's action) when the action is defined further down.
+- In the web app, each result row gets a button per next action. It opens that action's form with the row's values filled in, and the new run links back to the one it came from.
+- In a terminal, `shipfn users search --query ann` lists the rows, asks which one and what to do next, prompts for the inputs the row didn't fill, and runs it. Press Enter to stop. Scripts and `--json` get plain output with no prompts.
+- People only see next actions they're allowed to run.
+
 ## Inputs: type hints become the form
 
 | Type hint | Form field |

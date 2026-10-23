@@ -45,6 +45,37 @@ class Group:
         return f"Group({self.name!r})"
 
 
+class Next:
+    """A follow-up action offered on each row (or the single record) of a function's result, with inputs filled in
+    from that row. Fields with the same name as the action's inputs are matched automatically; map others by name.
+
+        @users.deploy(title="Find user", next=[make_admin, Next(set_plan, label="Change plan", user_id="id")])
+        def search(query: str) -> list[dict]: ...
+
+    `action` is a deployed function, or its name (`"make_admin"`, or `"users.make_admin"` from another group).
+    """
+
+    def __init__(self, action: Callable[..., Any] | str, label: str | None = None, **inputs: str):
+        self.action = action
+        self.label = label
+        self.inputs = inputs  # the action's input name -> the result field that fills it
+
+    def resolve(self, source: "DeployedFunction") -> dict[str, Any]:
+        """Needs the whole registry, so it runs when the manifest is built, not at decoration time."""
+        target = getattr(self.action, "__shipfn__", None)
+        if target is None:
+            names = [self.action, f"{source.group.name}.{self.action}" if source.group else None]
+            target = next((registry[n] for n in names if n in registry), None)
+        if target is None:
+            raise ValueError(f"next: there's no deployed action named {self.action!r}")
+        params = list(inspect.signature(target.func).parameters)
+        unknown = [name for name in self.inputs if name not in params]
+        if unknown:
+            raise ValueError(f"next: {target.name} has no input named {', '.join(unknown)}")
+        return {"action": target.name, "label": self.label or target.title,
+                "inputs": {name: self.inputs.get(name, name) for name in params}}
+
+
 @dataclass
 class DeployedFunction:
     """What @deploy recorded about a function; `registry` maps full names (`group.action` or `action`) to these."""
@@ -58,6 +89,7 @@ class DeployedFunction:
     timeout: int = 300
     group: Group | None = None
     action: str = ""  # the name within its group; the same as name when there's no group
+    next: list[Next] = field(default_factory=list)
 
     @property
     def all_secrets(self) -> list[str]:
@@ -81,6 +113,7 @@ class DeployedFunction:
             "timeout": self.timeout,
             "group": self.group.manifest_entry() if self.group else None,
             "action": self.action,
+            "next": [n.resolve(self) for n in self.next],
         }
 
     def call(self, inputs: dict[str, Any]) -> Any:
@@ -103,6 +136,7 @@ def deploy(
     secrets: list[str] | None = None,
     schedule: str | None = None,
     timeout: int = 300,
+    next: list[Next | Callable[..., Any] | str] | None = None,  # noqa: A002 (reads best as @deploy(next=[...]))
     _group: Group | None = None,
 ):
     """Deploy a function to Shipfn: teammates run it from a web form generated from its type hints.
@@ -119,6 +153,8 @@ def deploy(
         schedule: Cron expression in UTC (e.g. "0 9 * * MON"). Every input needs a default.
             Usually unnecessary: anyone can schedule a function from the web app.
         timeout: Seconds before the run is stopped (default 300, platform maximum 900).
+        next: Actions people can take on a result row next, with inputs filled from the row: deployed functions,
+            their names, or `Next(...)` for a label or field mapping. Builds step-by-step flows.
 
     Inputs: str, int, float, bool, date, datetime, Literal[...]/Enum (dropdown), list[...], X | None,
     Pydantic models and File (upload). Defaults make a field optional.
@@ -145,6 +181,7 @@ def deploy(
             timeout=timeout,
             group=_group,
             action=action,
+            next=[n if isinstance(n, Next) else Next(n) for n in (next or [])],
         )
         existing = registry.get(fn_name)
         if existing and existing.entrypoint != deployed.entrypoint:
