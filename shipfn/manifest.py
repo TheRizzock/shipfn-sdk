@@ -23,7 +23,7 @@ def discover_modules(root: Path) -> list[str]:
                 text = path.read_text(encoding="utf-8", errors="ignore")
             except OSError:
                 continue
-            if "shipfn" not in text or "deploy" not in text:
+            if "shipfn" not in text or ("deploy" not in text and "command" not in text):
                 continue
             rel = path.relative_to(root).with_suffix("")
             parts = list(rel.parts)
@@ -34,7 +34,8 @@ def discover_modules(root: Path) -> list[str]:
     return modules
 
 
-def build_manifest(root: Path) -> dict[str, Any]:
+def build_manifest(root: Path, include_local: bool = False) -> dict[str, Any]:
+    """What the platform deploys. `include_local` adds the @command functions, for the CLI and `shipfn check`."""
     from shipfn import __version__
 
     root = root.resolve()
@@ -49,6 +50,8 @@ def build_manifest(root: Path) -> dict[str, Any]:
 
     functions = []
     for fn in sorted(registry.values(), key=lambda f: f.name):
+        if fn.local_only and not include_local:
+            continue
         try:
             functions.append(fn.manifest_entry())
         except Exception as exc:

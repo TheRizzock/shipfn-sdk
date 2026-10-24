@@ -108,7 +108,8 @@ def _check(root: Path, as_json: bool) -> int:
         return 0 if report["ok"] else 1
 
     for fn in report["functions"]:
-        print(f"  {fn['name']}  ({', '.join(fn['inputs']) or 'no inputs'}) -> {fn['output_kind']}")
+        local = "  (local only)" if fn["local_only"] else ""
+        print(f"  {fn['name']}  ({', '.join(fn['inputs']) or 'no inputs'}) -> {fn['output_kind']}{local}")
     if report["functions"]:
         print()
     for issue in report["issues"]:
@@ -155,7 +156,7 @@ def _command(argv: list[str]) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     with contextlib.redirect_stdout(sys.stderr):  # import-time prints shouldn't mix with the result
-        manifest = build_manifest(root)
+        manifest = build_manifest(root, include_local=True)
     for err in manifest["errors"]:
         print(f"warning: {err.get('module') or err.get('function')}: {err['error']}", file=sys.stderr)
     fn, rest, prog = find(manifest["functions"], argv)
@@ -257,7 +258,7 @@ def _local(root: Path, name: str, inputs: dict, as_json: bool, follow: bool = Fa
     # In --json mode everything the user's code prints goes to stderr
     out = contextlib.redirect_stdout(sys.stderr) if as_json else contextlib.nullcontext()
     with out:
-        manifest = build_manifest(root)
+        manifest = build_manifest(root, include_local=True)
         for err in manifest["errors"]:
             print(f"warning: {err.get('module') or err.get('function')}: {err['error']}", file=sys.stderr)
         if name not in registry:

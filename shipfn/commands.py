@@ -88,6 +88,10 @@ def parse_inputs(prog: str, fn: dict[str, Any], argv: list[str]) -> dict[str, An
     return inputs
 
 
+def _local(fn: dict[str, Any]) -> str:
+    return "  (local only)" if fn.get("local_only") else ""
+
+
 def command_tree(functions: list[dict[str, Any]]) -> str:
     """What `shipfn <group> <action>` can run, for help and "not found" messages."""
     lines, grouped = [], {}
@@ -95,10 +99,10 @@ def command_tree(functions: list[dict[str, Any]]) -> str:
         if fn.get("group"):
             grouped.setdefault(fn["group"]["name"], (fn["group"], []))[1].append(fn)
         else:
-            lines.append(f"  {fn['name']:<24} {fn['title']}")
+            lines.append(f"  {fn['name']:<24} {fn['title']}{_local(fn)}")
     for name, (group, fns) in sorted(grouped.items()):
         lines.append(f"  {name:<24} {group['title']}")
-        lines += [f"    {fn['action']:<22} {fn['title']}" for fn in fns]
+        lines += [f"    {fn['action']:<22} {fn['title']}{_local(fn)}" for fn in fns]
     return "\n".join(lines) or "  (no @deploy functions found)"
 
 

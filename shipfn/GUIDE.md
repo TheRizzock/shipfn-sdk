@@ -13,6 +13,13 @@ The person running an automation can't see the code, a traceback or a terminal. 
 
 Run `shipfn check` before every push. If any module fails to import, nothing is published.
 
+### First-time setup
+
+1. Install the CLI into the project's virtualenv: `pip install "shipfn @ git+https://github.com/<owner>/shipfn-sdk"`. Keep it out of `requirements.txt`, because the platform adds its own copy.
+2. The project must be a GitHub repo. Shipfn deploys a repo and branch, not a local folder. Commit and push it first, with `.env`, key files and data kept out by `.gitignore`.
+3. In the web app, open **New project**. Pick the repo and branch (install the GitHub App when asked), then **Connect and deploy**. The first deploy starts right away.
+4. Set the secrets your functions declare on the project page. After that, every push to the branch deploys.
+
 ## Anatomy
 
 ```python
@@ -35,7 +42,7 @@ def closed_deals(region: Literal["NA", "EMEA", "APAC"] = "NA", since: date | Non
 - `name`: the function's identity on the platform. It defaults to the function name. **Renaming it creates a new automation**, and the old one's history and schedules stay behind. Pass `name="..."` to keep the identity if you rename the Python function.
 - `title`: the card and page heading. It defaults to the name, turned into a sentence.
 - `description`: the first paragraph of the docstring is the default. Write one plain-language sentence about what it does for the person.
-- `secrets`: names of environment variables, which builders set in the web app. Read them with `os.environ["CRM_TOKEN"]`. Never hard-code credentials and never take them as inputs.
+- `secrets`: names of environment variables, which builders set in the web app. Read them with `os.environ["CRM_TOKEN"]`. Never hard-code credentials and never take them as inputs. A declared secret that nobody has set doesn't block the run: the variable is simply missing, and builders see a "missing secrets" warning. For an optional secret, declare it and read it with `os.environ.get(...)`. Each secret is a single value, so a key file such as a `.pem` goes in as the file's contents, and the code reads it from the variable.
 - `timeout`: in seconds. The default is 300 and the maximum is 900.
 - `schedule`: a cron expression in UTC, for schedules owned by the code. Only use it when the user asks for one. Anyone can add a schedule in the web app, so you usually don't need it.
 
@@ -72,6 +79,26 @@ shipfn backups run --env staging --keep 3
 - An action's full name is `<group>.<name>`, e.g. `backups.run`. Use that with `shipfn local`.
 - A function's name is its identity on the platform. Moving an existing function into a group gives it a new name, so it starts with fresh run history and sharing settings.
 - A plain `@deploy` still works. Those functions appear in the project without a section, and run as `shipfn <name> --flags`.
+
+### Local commands
+
+Some tools only make sense on your own machine: they read local files, write reports to disk or open a browser. Write them with `@command` (or `@group.command`) instead of `@deploy`, so the project has one CLI and no separate Typer app:
+
+```python
+from shipfn import Group
+
+audits = Group("audits", title="Audits")
+
+
+@audits.command
+def render(slug: str, open_browser: bool = False) -> str:
+    ...
+```
+
+- They run as `shipfn audits render --slug x` and with `shipfn local`, with flags from the type hints, like any action. `shipfn check` lists them as "(local only)".
+- They're never deployed: the platform doesn't see them and nobody can run them from the web app. `@command` takes `name`, `title`, `description` and `next`, but no `secrets`, `schedule` or `timeout`, because it runs in your own environment (read secrets from `.env`). A deployed action's `next=` can't point at one.
+- Their module is still imported when the platform builds, so keep imports that only work locally inside the function.
+- To deploy one later, change `@command` to `@deploy`. It keeps its name.
 
 ## Flows: what to do next with a result
 
@@ -203,6 +230,6 @@ Raise exceptions with messages written for the person running the automation. Th
 - `shipfn check [--json]`: problems a deploy would hit, with fixes. Exit code 1 on errors.
 - `shipfn <group> <action> [--flags]` (or `shipfn <function> [--flags]`): run a function like a CLI command. Each input is a flag (`days` becomes `--days`, a bool becomes `--dry-run/--no-dry-run`, a list takes several values). Add `--help` to see them.
 - `shipfn local <name> [-i key=value ...] [--json]`: run a function on this machine. Values are parsed as JSON when possible, and `@path` passes a file. `--json` prints one JSON object on stdout (`ok`, `value`, `files`, `error`, `field_errors`), and the function's own prints go to stderr.
-- `shipfn manifest`: the full JSON the platform reads, including each input's JSON Schema.
+- `shipfn manifest`: the full JSON the platform reads, including each input's JSON Schema. Local `@command`s are left out.
 - `shipfn docs`: prints this guide.
 - `shipfn init`: an example automation plus agent instructions (`.claude/skills/shipfn/SKILL.md` and an `AGENTS.md` section). Run it again after upgrading the SDK to refresh the instructions.

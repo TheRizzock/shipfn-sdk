@@ -40,7 +40,7 @@ def test_check_passes_a_clean_project(tmp_path, capsys):
     assert code == 0 and report["ok"]
     assert report["issues"] == []
     assert report["functions"] == [{"name": "greet", "title": "Greet", "entrypoint": "fx_ag_clean:greet",
-                                    "inputs": ["name"], "output_kind": "markdown"}]
+                                    "inputs": ["name"], "output_kind": "markdown", "local_only": False}]
     assert "module noise" in err
 
 

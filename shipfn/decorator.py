@@ -38,6 +38,10 @@ class Group:
         """`@deploy` for an action in this group; takes the same options. Its full name is `<group>.<name>`."""
         return deploy(func, _group=self, **options)
 
+    def command(self, func: Callable[..., Any] | None = None, **options: Any):
+        """`@command` for a local-only action in this group: `shipfn <group> <action>`, never deployed."""
+        return command(func, _group=self, **options)
+
     def manifest_entry(self) -> dict[str, Any]:
         return {"name": self.name, "title": self.title, "description": self.description}
 
@@ -68,6 +72,8 @@ class Next:
             target = next((registry[n] for n in names if n in registry), None)
         if target is None:
             raise ValueError(f"next: there's no deployed action named {self.action!r}")
+        if target.local_only and not source.local_only:
+            raise ValueError(f"next: {target.name} is a local @command, so it isn't deployed and can't be offered here")
         params = list(inspect.signature(target.func).parameters)
         unknown = [name for name in self.inputs if name not in params]
         if unknown:
@@ -90,6 +96,7 @@ class DeployedFunction:
     group: Group | None = None
     action: str = ""  # the name within its group; the same as name when there's no group
     next: list[Next] = field(default_factory=list)
+    local_only: bool = False  # made by @command: runs from the CLI, never deployed
 
     @property
     def all_secrets(self) -> list[str]:
@@ -114,6 +121,7 @@ class DeployedFunction:
             "group": self.group.manifest_entry() if self.group else None,
             "action": self.action,
             "next": [n.resolve(self) for n in self.next],
+            **({"local_only": True} if self.local_only else {}),
         }
 
     def call(self, inputs: dict[str, Any]) -> Any:
@@ -138,6 +146,7 @@ def deploy(
     timeout: int = 300,
     next: list[Next | Callable[..., Any] | str] | None = None,  # noqa: A002 (reads best as @deploy(next=[...]))
     _group: Group | None = None,
+    _local_only: bool = False,
 ):
     """Deploy a function to Shipfn: teammates run it from a web form generated from its type hints.
 
@@ -163,6 +172,7 @@ def deploy(
     File/list[File] -> downloads, None -> "Done".
 
     To organise related functions, deploy them through a `Group` instead: `@backups.deploy(...)`.
+    For a tool that only runs on your machine, use `@command` instead.
 
     Run `shipfn docs` for the full guide and `shipfn check` before pushing.
     """
@@ -182,6 +192,7 @@ def deploy(
             group=_group,
             action=action,
             next=[n if isinstance(n, Next) else Next(n) for n in (next or [])],
+            local_only=_local_only,
         )
         existing = registry.get(fn_name)
         if existing and existing.entrypoint != deployed.entrypoint:
@@ -199,3 +210,25 @@ def deploy(
         return wrapper
 
     return wrap(func) if func is not None else wrap
+
+
+def command(
+    func: Callable[..., Any] | None = None,
+    *,
+    name: str | None = None,
+    title: str | None = None,
+    description: str | None = None,
+    next: list[Next | Callable[..., Any] | str] | None = None,  # noqa: A002
+    _group: Group | None = None,
+):
+    """A command for your own machine: `shipfn <group> <action> --flags` (or `shipfn <name>`), built from the type
+    hints like a deployed action, but never deployed. For tools that read local files, write reports to disk or open
+    a browser, so one project needs one CLI and no separate Typer app.
+
+        @audits.command
+        def render(slug: str, open_browser: bool = False) -> str: ...
+
+    Takes `name`, `title`, `description` and `next` like `@deploy`. There are no secrets, schedule or timeout:
+    it runs in your own environment.
+    """
+    return deploy(func, name=name, title=title, description=description, next=next, _group=_group, _local_only=True)

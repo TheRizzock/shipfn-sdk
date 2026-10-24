@@ -37,7 +37,7 @@ def _check_function(fn: dict[str, Any]) -> list[dict[str, Any]]:
     schema = fn["input_schema"]
     deployed = registry.get(name)
 
-    if not fn.get("description"):
+    if not fn.get("description") and not fn.get("local_only"):
         issues.append(_issue("warning", "No description; people see a blank card", name,
                              "Add a docstring: its first paragraph becomes the description"))
     if deployed is not None:
@@ -81,7 +81,7 @@ def _check_function(fn: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def check_project(root: Path) -> dict[str, Any]:
-    manifest = build_manifest(root)
+    manifest = build_manifest(root, include_local=True)
     issues = []
     for err in manifest["errors"]:
         where = err.get("module") or err.get("function")
@@ -90,6 +90,9 @@ def check_project(root: Path) -> dict[str, Any]:
     if not manifest["functions"] and not manifest["errors"]:
         issues.append(_issue("error", "No @deploy functions found",
                              fix="Decorate a function: `from shipfn import deploy` then `@deploy` above `def ...`"))
+    elif manifest["functions"] and all(f.get("local_only") for f in manifest["functions"]):
+        issues.append(_issue("warning", "Every function is a local @command, so a deploy publishes nothing",
+                             fix="Use @deploy for anything teammates should run"))
     for fn in manifest["functions"]:
         issues.extend(_check_function(fn))
     if not (Path(root) / "requirements.txt").is_file() and not (Path(root) / "pyproject.toml").is_file():
@@ -99,7 +102,8 @@ def check_project(root: Path) -> dict[str, Any]:
         "ok": not any(i["level"] == "error" for i in issues),
         "functions": [
             {"name": f["name"], "title": f["title"], "entrypoint": f["entrypoint"],
-             "inputs": f["input_schema"].get("x-order", []), "output_kind": f["output_kind"]}
+             "inputs": f["input_schema"].get("x-order", []), "output_kind": f["output_kind"],
+             "local_only": bool(f.get("local_only"))}
             for f in manifest["functions"]
         ],
         "issues": issues,

@@ -20,7 +20,9 @@ def to_jsonable(value: Any) -> Any:
     if value is None:
         return None
     if hasattr(value, "to_dict") and type(value).__name__ == "DataFrame":
-        return json.loads(value.to_json(orient="records", date_format="iso"))
+        # Not to_json: it turns plain dates into midnight datetimes. Missing values (NaN, NaT) become null
+        rows = value.astype(object).where(value.notna(), None).to_dict(orient="records")
+        return TypeAdapter(Any).dump_python(rows, mode="json")
     if isinstance(value, BaseModel):
         return value.model_dump(mode="json")
     try:

@@ -111,6 +111,18 @@ def test_runtime_emits_result_and_errors(tmp_path, capsys, monkeypatch):
     assert json.loads(last.removeprefix(RESULT_MARKER)) == {"ok": False, "error": "ValueError: nope", "files": []}
 
 
+def test_dataframes_keep_plain_dates_and_null_missing_values():
+    pd = pytest.importorskip("pandas")
+    from shipfn.runtime import to_jsonable
+
+    df = pd.DataFrame({"week": [date(2026, 8, 3), None], "at": [pd.Timestamp("2026-08-03 10:00", tz="UTC"), pd.NaT],
+                       "trials": [3, 4], "rate": [0.5, float("nan")]})
+    assert to_jsonable(df) == [
+        {"week": "2026-08-03", "at": "2026-08-03T10:00:00Z", "trials": 3, "rate": 0.5},
+        {"week": None, "at": None, "trials": 4, "rate": None},
+    ]
+
+
 def test_manifest_reports_import_errors(tmp_path):
     from shipfn.manifest import build_manifest
 
