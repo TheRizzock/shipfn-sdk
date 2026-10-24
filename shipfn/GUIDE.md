@@ -98,6 +98,7 @@ def render(slug: str, open_browser: bool = False) -> str:
 - They run as `shipfn audits render --slug x` and with `shipfn local`, with flags from the type hints, like any action. `shipfn check` lists them as "(local only)".
 - They're never deployed: the platform doesn't see them and nobody can run them from the web app. `@command` takes `name`, `title`, `description` and `next`, but no `secrets`, `schedule` or `timeout`, because it runs in your own environment (read secrets from `.env`). A deployed action's `next=` can't point at one.
 - Their module is still imported when the platform builds, so keep imports that only work locally inside the function.
+- Return the result instead of printing it. The CLI prints what you return (a table as aligned columns in a terminal, JSON when piped), so printing it as well shows it twice. Keep prints for progress.
 - To deploy one later, change `@command` to `@deploy`. It keeps its name.
 
 ## Flows: what to do next with a result

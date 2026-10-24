@@ -122,3 +122,11 @@ def test_one_row_skips_the_pick_and_enter_stops(project, monkeypatch, capsys):
 def test_no_menu_when_output_isnt_a_terminal(project, capsys):
     assert main(["users", "search", "--query", "ann"]) == 0
     assert '"name": "Ann Lee"' in capsys.readouterr().out  # plain JSON, no prompts
+
+
+def test_tables_print_as_columns_at_a_terminal(project, monkeypatch, capsys):
+    monkeypatch.setattr("sys.stdout.isatty", lambda: True)
+    assert main(["users", "search", "--query", "ann"]) == 0  # stdin isn't a terminal, so no menu
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0].split() == ["id", "user_id", "name"]
+    assert lines[2].split() == ["42", "42", "Ann", "Lee"] and lines[-1] == "2 rows"

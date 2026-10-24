@@ -183,6 +183,34 @@ def _rows(result) -> list[dict] | None:
     return None
 
 
+CELL_WIDTH = 40
+
+
+def _cell(value) -> str:
+    text = "" if value is None else value if isinstance(value, str) else json.dumps(value, default=str)
+    text = text.replace("\n", " ")
+    return text if len(text) <= CELL_WIDTH else text[:CELL_WIDTH - 1] + "…"
+
+
+def _table(rows: list[dict]) -> str:
+    """Rows as aligned columns, for a person at a terminal (pipes and --json get JSON)."""
+    columns = list(dict.fromkeys(k for row in rows for k in row))
+    cells = [[_cell(row.get(c)) for c in columns] for row in rows]
+    numeric = [all(isinstance(row.get(c), (int, float)) or row.get(c) is None for row in rows) for c in columns]
+    widths = [max(len(c), *(len(r[i]) for r in cells)) for i, c in enumerate(columns)]
+
+    def line(values: list[str]) -> str:
+        return "  ".join(v.rjust(w) if num else v.ljust(w) for v, w, num in zip(values, widths, numeric)).rstrip()
+
+    return "\n".join([line(columns), line(["-" * w for w in widths]), *(line(r) for r in cells),
+                      f"\n{len(rows)} row{'s' if len(rows) != 1 else ''}"])
+
+
+def _record(record: dict) -> str:
+    width = max(len(k) for k in record)
+    return "\n".join(f"{k.ljust(width)}  {_cell(v) if not isinstance(v, str) else v}" for k, v in record.items())
+
+
 def _ask(prompt: str) -> str | None:
     try:
         return input(prompt).strip()
@@ -290,6 +318,8 @@ def _local(root: Path, name: str, inputs: dict, as_json: bool, follow: bool = Fa
     if interactive and len(rows) > 1:
         for i, row in enumerate(rows, 1):
             print(f"  {i}. " + "   ".join(f"{k}={v}" for k, v in list(row.items())[:5]))
+    elif rows and sys.stdout.isatty():
+        print(_table(rows) if isinstance(result, list) else _record(result))
     elif result is not None:
         print(result if isinstance(result, str) else json.dumps(result, indent=2))
     if files:
